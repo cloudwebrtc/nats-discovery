@@ -160,7 +160,9 @@ func (s *Registry) Listen() error {
 			log.Infof("app.get")
 			resp := &GetResponse{}
 			for _, item := range s.nodes {
-				resp.Nodes = append(resp.Nodes, *item.node)
+				if strings.Contains(item.subj, msg.Subject) {
+					resp.Nodes = append(resp.Nodes, *item.node)
+				}
 			}
 			data, err := util.Marshal(resp)
 			if err != nil {

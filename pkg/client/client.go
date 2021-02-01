@@ -47,7 +47,8 @@ func (c *Client) Get(service string) error {
 		log.Errorf("%v", err)
 		return err
 	}
-	subj := registry.DefaultPublishPrefix + "."
+	subj := registry.DefaultPublishPrefix + "." + service
+	log.Infof("Get: subj=%v", subj)
 	if msg, err2 := c.nc.Request(subj, data, 15*time.Second); err2 != nil {
 		log.Errorf("Get: service=%v, err=%v", service, err2)
 		return nil
