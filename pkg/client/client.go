@@ -65,6 +65,42 @@ func (c *Client) Get(service string) error {
 	return nil
 }
 
+func (c *Client) handleMsg(msg *nats.Msg) error {
+	log.Infof("handle discovery message: %v", msg.Subject)
+
+	c.nodeLock.Lock()
+	defer c.nodeLock.Unlock()
+
+	var event registry.KeepAlive
+	err := util.Unmarshal(msg.Data, &event)
+	if err != nil {
+		log.Errorf("connect: error parsing offer: %v", err)
+		return err
+	}
+	nid := event.Node.ID()
+	switch event.Action {
+	case registry.Save:
+		if _, ok := c.nodes[nid]; !ok {
+			log.Infof("app.save")
+			c.nodes[nid] = &event.Node
+		}
+	case registry.Update:
+		if _, ok := c.nodes[nid]; ok {
+			log.Infof("app.update")
+		}
+	case registry.Delete:
+		if _, ok := c.nodes[nid]; ok {
+			log.Infof("app.delete")
+		}
+		delete(c.nodes, nid)
+	default:
+		log.Warnf("unkonw message: %v", string(msg.Data))
+		return fmt.Errorf("unkonw message: %v", msg.Data)
+	}
+
+	return nil
+}
+
 func (c *Client) Watch(service string) error {
 	var err error
 	subj := registry.DefaultDiscoveryPrefix + "." + service + ".>"
@@ -75,42 +111,6 @@ func (c *Client) Watch(service string) error {
 		return err
 	}
 
-	handleMsg := func(msg *nats.Msg) error {
-		log.Infof("handle discovery message: %v", msg.Subject)
-
-		c.nodeLock.Lock()
-		defer c.nodeLock.Unlock()
-
-		var event registry.KeepAlive
-		err := util.Unmarshal(msg.Data, &event)
-		if err != nil {
-			log.Errorf("connect: error parsing offer: %v", err)
-			return err
-		}
-		nid := event.Node.ID()
-		switch event.Action {
-		case registry.Save:
-			if _, ok := c.nodes[nid]; !ok {
-				log.Infof("app.save")
-				c.nodes[nid] = &event.Node
-			}
-		case registry.Update:
-			if _, ok := c.nodes[nid]; ok {
-				log.Infof("app.update")
-			}
-		case registry.Delete:
-			if _, ok := c.nodes[nid]; ok {
-				log.Infof("app.delete")
-			}
-			delete(c.nodes, nid)
-		default:
-			log.Warnf("unkonw message: %v", string(msg.Data))
-			return fmt.Errorf("unkonw message: %v", msg.Data)
-		}
-
-		return nil
-	}
-
 	go func() error {
 		for {
 			select {
@@ -118,7 +118,7 @@ func (c *Client) Watch(service string) error {
 				return c.ctx.Err()
 			case msg, ok := <-msgCh:
 				if ok {
-					err := handleMsg(msg)
+					err := c.handleMsg(msg)
 					if err != nil {
 						return err
 					}
@@ -134,17 +134,19 @@ func (c *Client) Watch(service string) error {
 
 func (c *Client) KeepAlive(node registry.Node) error {
 	t := time.NewTicker(registry.DefaultLivecycle)
+
 	defer func() {
 		c.SendAction(node, registry.Delete)
 		t.Stop()
 	}()
 
 	c.SendAction(node, registry.Save)
+
 	for {
 		select {
 		case <-c.ctx.Done():
 			err := c.ctx.Err()
-			log.Errorf("keepalive: err %v", err)
+			log.Errorf("keepalive abort: err %v", err)
 			return err
 		case <-t.C:
 			c.SendAction(node, registry.Update)
