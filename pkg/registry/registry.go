@@ -53,6 +53,10 @@ type KeepAlive struct {
 	Node   Node
 }
 
+type GetResponse struct {
+	Nodes []Node
+}
+
 type NodeItem struct {
 	subj   string
 	expire int64
@@ -74,7 +78,7 @@ func (s *Registry) Close() {
 
 // NewService create a service instance
 func NewRegistry(natsURL string) (*Registry, error) {
-	opts := []nats.Option{nats.Name("nats-grpc echo client")}
+	opts := []nats.Option{nats.Name("nats-discovery registry server")}
 	// Connect to the NATS server.
 	nc, err := nats.Connect(natsURL, opts...)
 	if err != nil {
@@ -161,9 +165,18 @@ func (s *Registry) Listen() error {
 			}
 			delete(s.nodes, nid)
 		case Get:
-			//TODO: find nodes by key, return []*Node
 			log.Infof("app.get")
-			s.nc.Publish(msg.Reply, []byte("node-list"))
+			resp := &GetResponse{}
+			for _, item := range s.nodes {
+				resp.Nodes = append(resp.Nodes, *item.node)
+			}
+			data, err := util.Marshal(resp)
+			if err != nil {
+				log.Errorf("%v", err)
+				return err
+			}
+			log.Infof("app.get")
+			s.nc.Publish(msg.Reply, data)
 		default:
 			log.Warnf("unkonw message: %v", msg.Data)
 			return fmt.Errorf("unkonw message: %v", msg.Data)

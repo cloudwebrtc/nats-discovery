@@ -30,7 +30,7 @@ func (c *Client) Close() {
 // NewService create a service instance
 func NewClient(natsURL string) (*Client, error) {
 
-	opts := []nats.Option{nats.Name("nats-grpc echo client")}
+	opts := []nats.Option{nats.Name("nats-discovery client")}
 	// Connect to the NATS server.
 	nc, err := nats.Connect(natsURL, opts...)
 	if err != nil {
@@ -60,7 +60,14 @@ func (c *Client) Get(service string) error {
 		log.Errorf("Get: service=%v, err=%v", service, err2)
 		return nil
 	} else {
-		log.Infof("msg %v", string(msg.Data))
+		var resp registry.GetResponse
+		err := util.Unmarshal(msg.Data, &resp)
+		if err != nil {
+			log.Errorf("Get: error parsing offer: %v", err)
+			return err
+		}
+
+		log.Infof("nodes %v", resp.Nodes)
 	}
 	return nil
 }
