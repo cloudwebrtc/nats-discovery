@@ -24,19 +24,11 @@ type Client struct {
 
 func (c *Client) Close() {
 	c.cancel()
-	c.nc.Close()
+	c.sub.Unsubscribe()
 }
 
 // NewService create a service instance
-func NewClient(natsURL string) (*Client, error) {
-
-	opts := []nats.Option{nats.Name("nats-discovery client")}
-	// Connect to the NATS server.
-	nc, err := nats.Connect(natsURL, opts...)
-	if err != nil {
-		log.Errorf("%v", err)
-		return nil, err
-	}
+func NewClient(nc *nats.Conn) (*Client, error) {
 
 	c := &Client{
 		nc:    nc,

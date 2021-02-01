@@ -7,7 +7,7 @@ import (
 
 	"github.com/cloudwebrtc/nats-discovery/pkg/registry"
 	"github.com/cloudwebrtc/nats-discovery/pkg/util"
-	"github.com/nats-io/go-nats"
+	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 	"github.com/tj/assert"
 )
@@ -24,7 +24,15 @@ func TestWatch(t *testing.T) {
 	var wg sync.WaitGroup
 
 	natsURL := nats.DefaultURL
-	s, err := NewClient(natsURL)
+	opts := []nats.Option{nats.Name("nats-discovery client")}
+	// Connect to the NATS server.
+	nc, err := nats.Connect(natsURL, opts...)
+	if err != nil {
+		log.Errorf("%v", err)
+		t.Error(err)
+	}
+
+	s, err := NewClient(nc)
 	assert.NoError(t, err)
 
 	s.Watch("sfu")

@@ -73,19 +73,11 @@ type Registry struct {
 
 func (s *Registry) Close() {
 	s.cancel()
-	s.nc.Close()
+	s.sub.Unsubscribe()
 }
 
 // NewService create a service instance
-func NewRegistry(natsURL string) (*Registry, error) {
-	opts := []nats.Option{nats.Name("nats-discovery registry server")}
-	// Connect to the NATS server.
-	nc, err := nats.Connect(natsURL, opts...)
-	if err != nil {
-		log.Errorf("%v", err)
-		return nil, err
-	}
-
+func NewRegistry(nc *nats.Conn) (*Registry, error) {
 	s := &Registry{
 		nc:    nc,
 		nodes: make(map[string]*NodeItem),
