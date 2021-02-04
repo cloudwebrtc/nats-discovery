@@ -12,19 +12,19 @@ import (
 	log "github.com/pion/ion-log"
 )
 
-// AppState define the node state type
-type AppState int32
+// NodeState define the node state type
+type NodeState int32
 
 const (
-	// AppUp app starting up
-	AppUp AppState = 0
-	// AppDown app shutdown
-	AppDown AppState = 1
-	// AppKeepalive app keepalive
-	AppKeepalive AppState = 2
+	// NodeUp node starting up
+	NodeUp NodeState = 0
+	// NodeDown node shutdown
+	NodeDown NodeState = 1
+	// NodeKeepalive node keepalive
+	NodeKeepalive NodeState = 2
 
-	DefaultPublishPrefix   = "app.publish"
-	DefaultDiscoveryPrefix = "app.discovery"
+	DefaultPublishPrefix   = "node.publish"
+	DefaultDiscoveryPrefix = "node.discovery"
 
 	DefaultLivecycle = 2 * time.Second
 
@@ -36,11 +36,25 @@ const (
 	DefaultExpire = 5
 )
 
+type Protocol string
+
+const (
+	GRPC    Protocol = "grpc"
+	NGRPC   Protocol = "nats-grpc"
+	JSONRPC Protocol = "json-rpc"
+)
+
+type Signal struct {
+	Protocol Protocol
+	Addr     string
+}
+
 // Node represents a node info
 type Node struct {
 	DC      string
 	Service string
 	NID     string
+	Signal  Signal
 }
 
 // ID return the node id with scheme prefix
@@ -91,7 +105,7 @@ func (s *Registry) checkExpires(now int64) error {
 	for key, item := range s.nodes {
 		if item.expire <= now {
 			subj := strings.ReplaceAll(item.subj, DefaultPublishPrefix, DefaultDiscoveryPrefix)
-			log.Infof("app.delete %v, %v", subj, key)
+			log.Infof("node.delete %v, %v", subj, key)
 			d, err := util.Marshal(&KeepAlive{
 				Action: Delete, Node: *item.node,
 			})
@@ -135,7 +149,7 @@ func (s *Registry) Listen() error {
 		switch event.Action {
 		case Save:
 			if _, ok := s.nodes[nid]; !ok {
-				log.Infof("app.save")
+				log.Infof("node.save")
 				subj := strings.ReplaceAll(msg.Subject, DefaultPublishPrefix, DefaultDiscoveryPrefix)
 				s.nc.Publish(subj, msg.Data)
 				s.nodes[nid] = &NodeItem{
@@ -146,18 +160,18 @@ func (s *Registry) Listen() error {
 			}
 		case Update:
 			if node, ok := s.nodes[nid]; ok {
-				log.Infof("app.update")
+				log.Infof("node.update")
 				node.expire = time.Now().Unix() + DefaultExpire
 			}
 		case Delete:
 			if _, ok := s.nodes[nid]; ok {
-				log.Infof("app.delete")
+				log.Infof("node.delete")
 				subj := strings.ReplaceAll(msg.Subject, DefaultPublishPrefix, DefaultDiscoveryPrefix)
 				s.nc.Publish(subj, msg.Data)
 			}
 			delete(s.nodes, nid)
 		case Get:
-			log.Infof("app.get")
+			log.Infof("node.get")
 			resp := &GetResponse{}
 			for _, item := range s.nodes {
 				if strings.Contains(item.subj, msg.Subject) {
@@ -169,7 +183,6 @@ func (s *Registry) Listen() error {
 				log.Errorf("%v", err)
 				return err
 			}
-			log.Infof("app.get")
 			s.nc.Publish(msg.Reply, data)
 		default:
 			log.Warnf("unkonw message: %v", msg.Data)

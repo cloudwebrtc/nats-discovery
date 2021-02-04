@@ -3,7 +3,6 @@ package client
 import (
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/cloudwebrtc/nats-discovery/pkg/registry"
 	"github.com/cloudwebrtc/nats-discovery/pkg/util"
@@ -35,31 +34,40 @@ func TestWatch(t *testing.T) {
 	s, err := NewClient(nc)
 	assert.NoError(t, err)
 
-	s.Watch("sfu")
-	/*
-		s.Watch(proto.ServiceSFU, func(state NodeState, id string, node *Node) {
-			if state == NodeStateUp {
-				assert.Equal(t, s.node, *node)
-				wg.Done()
-			} else if state == NodeStateDown {
-				assert.Equal(t, s.node.ID(), id)
-				wg.Done()
-			}
-		})
-	*/
-
-	wg.Add(1)
-
 	node := registry.Node{
 		DC:      "dc1",
 		Service: "sfu",
 		NID:     "sfu" + "-" + util.RandomString(12),
+		Signal: registry.Signal{
+			Protocol: registry.GRPC,
+			Addr:     "sfu:5551",
+		},
 	}
+
+	s.Watch("sfu", func(state registry.NodeState, n *registry.Node) {
+		if state == registry.NodeUp {
+			log.Infof("NodeUp => %v", *n)
+			assert.Equal(t, node, *n)
+			assert.Equal(t, node.Signal, n.Signal)
+			wg.Done()
+		} else if state == registry.NodeDown {
+			log.Infof("NodeDown => %v", *n)
+			assert.Equal(t, node.ID(), n.ID())
+			wg.Done()
+		}
+	})
+
+	wg.Add(1)
+
 	go s.KeepAlive(node)
-	//wg.Wait()
-	time.Sleep(5 * time.Second)
-	s.Get("sfu")
-	//s.SendAction(node, registry.Delete)
-	//s.Close()
+	wg.Wait()
+
+	res, err := s.Get("sfu")
+	log.Infof("nodes => %v", res.Nodes)
+
+	assert.Equal(t, node.Signal, res.Nodes[0].Signal)
+
+	wg.Add(1)
+	s.SendAction(node, registry.Delete)
 	wg.Wait()
 }

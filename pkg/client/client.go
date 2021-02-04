@@ -13,13 +13,16 @@ import (
 	log "github.com/pion/ion-log"
 )
 
+type NodeStateChangeCallback func(state registry.NodeState, node *registry.Node)
+
 type Client struct {
-	nc       *nats.Conn
-	sub      *nats.Subscription
-	nodes    map[string]*registry.Node
-	nodeLock sync.Mutex
-	ctx      context.Context
-	cancel   context.CancelFunc
+	nc                    *nats.Conn
+	sub                   *nats.Subscription
+	nodes                 map[string]*registry.Node
+	nodeLock              sync.Mutex
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	handleNodeStateChange NodeStateChangeCallback
 }
 
 func (c *Client) Close() {
@@ -39,30 +42,31 @@ func NewClient(nc *nats.Conn) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) Get(service string) error {
+func (c *Client) Get(service string) (*registry.GetResponse, error) {
 	data, err := util.Marshal(&registry.KeepAlive{
 		Action: registry.Get, Node: registry.Node{},
 	})
 	if err != nil {
 		log.Errorf("%v", err)
-		return err
+		return nil, err
 	}
 	subj := registry.DefaultPublishPrefix + "." + service
 	log.Infof("Get: subj=%v", subj)
-	if msg, err2 := c.nc.Request(subj, data, 15*time.Second); err2 != nil {
-		log.Errorf("Get: service=%v, err=%v", service, err2)
-		return nil
-	} else {
-		var resp registry.GetResponse
-		err := util.Unmarshal(msg.Data, &resp)
-		if err != nil {
-			log.Errorf("Get: error parsing offer: %v", err)
-			return err
-		}
-
-		log.Infof("nodes %v", resp.Nodes)
+	msg, err := c.nc.Request(subj, data, 15*time.Second)
+	if err != nil {
+		log.Errorf("Get: service=%v, err=%v", service, err)
+		return nil, err
 	}
-	return nil
+
+	var resp registry.GetResponse
+	err = util.Unmarshal(msg.Data, &resp)
+	if err != nil {
+		log.Errorf("Get: error parsing offer: %v", err)
+		return nil, err
+	}
+
+	log.Infof("nodes %v", resp.Nodes)
+	return &resp, nil
 }
 
 func (c *Client) handleMsg(msg *nats.Msg) error {
@@ -81,16 +85,19 @@ func (c *Client) handleMsg(msg *nats.Msg) error {
 	switch event.Action {
 	case registry.Save:
 		if _, ok := c.nodes[nid]; !ok {
-			log.Infof("app.save")
+			log.Infof("node.save")
 			c.nodes[nid] = &event.Node
+			c.handleNodeStateChange(registry.NodeUp, &event.Node)
 		}
 	case registry.Update:
 		if _, ok := c.nodes[nid]; ok {
-			log.Infof("app.update")
+			log.Infof("node.update")
+			c.handleNodeStateChange(registry.NodeKeepalive, &event.Node)
 		}
 	case registry.Delete:
 		if _, ok := c.nodes[nid]; ok {
-			log.Infof("app.delete")
+			log.Infof("node.delete")
+			c.handleNodeStateChange(registry.NodeDown, &event.Node)
 		}
 		delete(c.nodes, nid)
 	default:
@@ -101,7 +108,7 @@ func (c *Client) handleMsg(msg *nats.Msg) error {
 	return nil
 }
 
-func (c *Client) Watch(service string) error {
+func (c *Client) Watch(service string, onStateChange NodeStateChangeCallback) error {
 	var err error
 	subj := registry.DefaultDiscoveryPrefix + "." + service + ".>"
 
@@ -110,6 +117,8 @@ func (c *Client) Watch(service string) error {
 	if c.sub, err = c.nc.ChanSubscribe(subj, msgCh); err != nil {
 		return err
 	}
+
+	c.handleNodeStateChange = onStateChange
 
 	go func() error {
 		for {
