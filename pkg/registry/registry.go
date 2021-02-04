@@ -44,9 +44,10 @@ const (
 	JSONRPC Protocol = "json-rpc"
 )
 
-type Signal struct {
+type RPC struct {
 	Protocol Protocol
 	Addr     string
+	Params   map[string]string
 }
 
 // Node represents a node info
@@ -54,7 +55,7 @@ type Node struct {
 	DC      string
 	Service string
 	NID     string
-	Signal  Signal
+	RPC     RPC
 }
 
 // ID return the node id with scheme prefix
