@@ -56,7 +56,9 @@ func main() {
 		log.Errorf("%v", err)
 		return
 	}
-	reg.Listen()
+	reg.Listen(func(action string, node discovery.Node) {
+		log.Infof("handle Node: %v, %v", action, node)
+	})
 
 	select {}
 }

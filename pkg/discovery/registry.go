@@ -80,12 +80,13 @@ type NodeItem struct {
 }
 
 type Registry struct {
-	nc     *nats.Conn
-	sub    *nats.Subscription
-	nodes  map[string]*NodeItem
-	ctx    context.Context
-	cancel context.CancelFunc
-	mutex  sync.Mutex
+	nc         *nats.Conn
+	sub        *nats.Subscription
+	nodes      map[string]*NodeItem
+	ctx        context.Context
+	cancel     context.CancelFunc
+	mutex      sync.Mutex
+	handleNode func(action string, node Node)
 }
 
 func (s *Registry) Close() {
@@ -123,6 +124,7 @@ func (s *Registry) checkExpires(now int64) error {
 			}
 			s.mutex.Lock()
 			defer s.mutex.Unlock()
+			s.handleNode(Delete, *item.node)
 			delete(s.nodes, key)
 		}
 	}
@@ -141,11 +143,11 @@ func (s *Registry) GetNodes(service string) ([]Node, error) {
 	return nodes, nil
 }
 
-func (s *Registry) Listen() error {
+func (s *Registry) Listen(handleNode func(action string, node Node)) error {
 	var err error
 	subj := DefaultPublishPrefix + ".>"
-
 	msgCh := make(chan *nats.Msg)
+	s.handleNode = handleNode
 
 	if s.sub, err = s.nc.ChanSubscribe(subj, msgCh); err != nil {
 		return err
@@ -174,6 +176,7 @@ func (s *Registry) Listen() error {
 					node:   &event.Node,
 					subj:   msg.Subject,
 				}
+				s.handleNode(event.Action, event.Node)
 			}
 			s.mutex.Unlock()
 		case Update:
@@ -181,6 +184,7 @@ func (s *Registry) Listen() error {
 			if node, ok := s.nodes[nid]; ok {
 				log.Infof("node.update")
 				node.expire = time.Now().Unix() + DefaultExpire
+				s.handleNode(event.Action, event.Node)
 			}
 			s.mutex.Unlock()
 		case Delete:
@@ -188,6 +192,7 @@ func (s *Registry) Listen() error {
 				log.Infof("node.delete")
 				subj := strings.ReplaceAll(msg.Subject, DefaultPublishPrefix, DefaultDiscoveryPrefix)
 				s.nc.Publish(subj, msg.Data)
+				s.handleNode(event.Action, event.Node)
 			}
 			delete(s.nodes, nid)
 		case Get:
