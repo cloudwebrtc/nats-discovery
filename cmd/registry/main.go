@@ -3,7 +3,7 @@ package main
 import (
 	"time"
 
-	"github.com/cloudwebrtc/nats-discovery/pkg/registry"
+	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 )
@@ -42,7 +42,7 @@ func setupConnOptions(opts []nats.Option) []nats.Option {
 func main() {
 	natsURL := nats.DefaultURL
 
-	opts := []nats.Option{nats.Name("nats-discovery registry server")}
+	opts := []nats.Option{nats.Name("nats-discovery discovery server")}
 	opts = setupConnOptions(opts)
 	// Connect to the NATS server.
 	nc, err := nats.Connect(natsURL, opts...)
@@ -51,7 +51,7 @@ func main() {
 		return
 	}
 
-	reg, err := registry.NewRegistry(nc)
+	reg, err := discovery.NewRegistry(nc)
 	if err != nil {
 		log.Errorf("%v", err)
 		return

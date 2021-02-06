@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cloudwebrtc/nats-discovery/pkg/registry"
+	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
 	"github.com/cloudwebrtc/nats-discovery/pkg/util"
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
@@ -34,24 +34,24 @@ func TestWatch(t *testing.T) {
 	s, err := NewClient(nc)
 	assert.NoError(t, err)
 
-	node := registry.Node{
+	node := discovery.Node{
 		DC:      "dc1",
 		Service: "sfu",
 		NID:     util.RandomString(12),
-		RPC: registry.RPC{
-			Protocol: registry.GRPC,
+		RPC: discovery.RPC{
+			Protocol: discovery.GRPC,
 			Addr:     "sfu:5551",
 			Params:   map[string]string{"username": "foo", "password": "bar"},
 		},
 	}
 
-	s.Watch("sfu", func(state registry.NodeState, n *registry.Node) {
-		if state == registry.NodeUp {
+	s.Watch("sfu", func(state discovery.NodeState, n *discovery.Node) {
+		if state == discovery.NodeUp {
 			log.Infof("NodeUp => %v", *n)
 			assert.Equal(t, node, *n)
 			assert.Equal(t, node.RPC, n.RPC)
 			wg.Done()
-		} else if state == registry.NodeDown {
+		} else if state == discovery.NodeDown {
 			log.Infof("NodeDown => %v", *n)
 			assert.Equal(t, node.ID(), n.ID())
 			wg.Done()
@@ -69,6 +69,6 @@ func TestWatch(t *testing.T) {
 	assert.Equal(t, node.RPC, res.Nodes[0].RPC)
 
 	wg.Add(1)
-	s.SendAction(node, registry.Delete)
+	s.SendAction(node, discovery.Delete)
 	wg.Wait()
 }

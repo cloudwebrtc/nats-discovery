@@ -7,18 +7,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cloudwebrtc/nats-discovery/pkg/registry"
+	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
 	"github.com/cloudwebrtc/nats-discovery/pkg/util"
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 )
 
-type NodeStateChangeCallback func(state registry.NodeState, node *registry.Node)
+type NodeStateChangeCallback func(state discovery.NodeState, node *discovery.Node)
 
 type Client struct {
 	nc                    *nats.Conn
 	sub                   *nats.Subscription
-	nodes                 map[string]*registry.Node
+	nodes                 map[string]*discovery.Node
 	nodeLock              sync.Mutex
 	ctx                   context.Context
 	cancel                context.CancelFunc
@@ -35,22 +35,22 @@ func NewClient(nc *nats.Conn) (*Client, error) {
 
 	c := &Client{
 		nc:    nc,
-		nodes: make(map[string]*registry.Node),
+		nodes: make(map[string]*discovery.Node),
 	}
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	return c, nil
 }
 
-func (c *Client) Get(service string) (*registry.GetResponse, error) {
-	data, err := util.Marshal(&registry.KeepAlive{
-		Action: registry.Get, Node: registry.Node{},
+func (c *Client) Get(service string) (*discovery.GetResponse, error) {
+	data, err := util.Marshal(&discovery.KeepAlive{
+		Action: discovery.Get, Node: discovery.Node{},
 	})
 	if err != nil {
 		log.Errorf("%v", err)
 		return nil, err
 	}
-	subj := registry.DefaultPublishPrefix + "." + service
+	subj := discovery.DefaultPublishPrefix + "." + service
 	log.Infof("Get: subj=%v", subj)
 	msg, err := c.nc.Request(subj, data, 15*time.Second)
 	if err != nil {
@@ -58,7 +58,7 @@ func (c *Client) Get(service string) (*registry.GetResponse, error) {
 		return nil, err
 	}
 
-	var resp registry.GetResponse
+	var resp discovery.GetResponse
 	err = util.Unmarshal(msg.Data, &resp)
 	if err != nil {
 		log.Errorf("Get: error parsing offer: %v", err)
@@ -75,7 +75,7 @@ func (c *Client) handleMsg(msg *nats.Msg) error {
 	c.nodeLock.Lock()
 	defer c.nodeLock.Unlock()
 
-	var event registry.KeepAlive
+	var event discovery.KeepAlive
 	err := util.Unmarshal(msg.Data, &event)
 	if err != nil {
 		log.Errorf("connect: error parsing offer: %v", err)
@@ -83,21 +83,21 @@ func (c *Client) handleMsg(msg *nats.Msg) error {
 	}
 	nid := event.Node.ID()
 	switch event.Action {
-	case registry.Save:
+	case discovery.Save:
 		if _, ok := c.nodes[nid]; !ok {
 			log.Infof("node.save")
 			c.nodes[nid] = &event.Node
-			c.handleNodeStateChange(registry.NodeUp, &event.Node)
+			c.handleNodeStateChange(discovery.NodeUp, &event.Node)
 		}
-	case registry.Update:
+	case discovery.Update:
 		if _, ok := c.nodes[nid]; ok {
 			log.Infof("node.update")
-			c.handleNodeStateChange(registry.NodeKeepalive, &event.Node)
+			c.handleNodeStateChange(discovery.NodeKeepalive, &event.Node)
 		}
-	case registry.Delete:
+	case discovery.Delete:
 		if _, ok := c.nodes[nid]; ok {
 			log.Infof("node.delete")
-			c.handleNodeStateChange(registry.NodeDown, &event.Node)
+			c.handleNodeStateChange(discovery.NodeDown, &event.Node)
 		}
 		delete(c.nodes, nid)
 	default:
@@ -110,7 +110,7 @@ func (c *Client) handleMsg(msg *nats.Msg) error {
 
 func (c *Client) Watch(service string, onStateChange NodeStateChangeCallback) error {
 	var err error
-	subj := registry.DefaultDiscoveryPrefix + "." + service + ".>"
+	subj := discovery.DefaultDiscoveryPrefix + "." + service + ".>"
 
 	msgCh := make(chan *nats.Msg)
 
@@ -141,15 +141,15 @@ func (c *Client) Watch(service string, onStateChange NodeStateChangeCallback) er
 	return nil
 }
 
-func (c *Client) KeepAlive(node registry.Node) error {
-	t := time.NewTicker(registry.DefaultLivecycle)
+func (c *Client) KeepAlive(node discovery.Node) error {
+	t := time.NewTicker(discovery.DefaultLivecycle)
 
 	defer func() {
-		c.SendAction(node, registry.Delete)
+		c.SendAction(node, discovery.Delete)
 		t.Stop()
 	}()
 
-	c.SendAction(node, registry.Save)
+	c.SendAction(node, discovery.Save)
 
 	for {
 		select {
@@ -158,21 +158,21 @@ func (c *Client) KeepAlive(node registry.Node) error {
 			log.Errorf("keepalive abort: err %v", err)
 			return err
 		case <-t.C:
-			c.SendAction(node, registry.Update)
+			c.SendAction(node, discovery.Update)
 			break
 		}
 	}
 }
 
-func (c *Client) SendAction(node registry.Node, action string) error {
-	data, err := util.Marshal(&registry.KeepAlive{
+func (c *Client) SendAction(node discovery.Node, action string) error {
+	data, err := util.Marshal(&discovery.KeepAlive{
 		Action: action, Node: node,
 	})
 	if err != nil {
 		log.Errorf("%v", err)
 		return err
 	}
-	subj := registry.DefaultPublishPrefix + "." + node.Service + "." + node.ID()
+	subj := discovery.DefaultPublishPrefix + "." + node.Service + "." + node.ID()
 	if err := c.nc.Publish(subj, data); err != nil {
 		log.Errorf("node start error: err=%v, id=%v", err, node.ID())
 		return nil
