@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudwebrtc/nats-discovery/pkg/util"
@@ -84,6 +85,7 @@ type Registry struct {
 	nodes  map[string]*NodeItem
 	ctx    context.Context
 	cancel context.CancelFunc
+	mutex  sync.Mutex
 }
 
 func (s *Registry) Close() {
@@ -119,11 +121,24 @@ func (s *Registry) checkExpires(now int64) error {
 				log.Errorf("node start error: err=%v, id=%s", err, item.node.ID())
 				return nil
 			}
-
+			s.mutex.Lock()
+			defer s.mutex.Unlock()
 			delete(s.nodes, key)
 		}
 	}
 	return nil
+}
+
+func (s *Registry) GetNodes(service string) ([]Node, error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	nodes := []Node{}
+	for _, item := range s.nodes {
+		if strings.Contains(item.node.Service, service) || service == "*" {
+			nodes = append(nodes, *item.node)
+		}
+	}
+	return nodes, nil
 }
 
 func (s *Registry) Listen() error {
@@ -149,6 +164,7 @@ func (s *Registry) Listen() error {
 		nid := event.Node.ID()
 		switch event.Action {
 		case Save:
+			s.mutex.Lock()
 			if _, ok := s.nodes[nid]; !ok {
 				log.Infof("node.save")
 				subj := strings.ReplaceAll(msg.Subject, DefaultPublishPrefix, DefaultDiscoveryPrefix)
@@ -159,11 +175,14 @@ func (s *Registry) Listen() error {
 					subj:   msg.Subject,
 				}
 			}
+			s.mutex.Unlock()
 		case Update:
+			s.mutex.Lock()
 			if node, ok := s.nodes[nid]; ok {
 				log.Infof("node.update")
 				node.expire = time.Now().Unix() + DefaultExpire
 			}
+			s.mutex.Unlock()
 		case Delete:
 			if _, ok := s.nodes[nid]; ok {
 				log.Infof("node.delete")
@@ -174,11 +193,13 @@ func (s *Registry) Listen() error {
 		case Get:
 			log.Infof("node.get")
 			resp := &GetResponse{}
+			s.mutex.Lock()
 			for _, item := range s.nodes {
 				if strings.Contains(item.subj, msg.Subject) {
 					resp.Nodes = append(resp.Nodes, *item.node)
 				}
 			}
+			s.mutex.Unlock()
 			data, err := util.Marshal(resp)
 			if err != nil {
 				log.Errorf("%v", err)
