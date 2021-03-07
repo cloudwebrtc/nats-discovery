@@ -149,7 +149,9 @@ func (s *Registry) Listen(handleNode func(action string, node Node)) error {
 	msgCh := make(chan *nats.Msg)
 	s.handleNode = handleNode
 
-	if s.sub, err = s.nc.ChanSubscribe(subj, msgCh); err != nil {
+	if s.sub, err = s.nc.Subscribe(subj, func(msg *nats.Msg) {
+		msgCh <- msg
+	}); err != nil {
 		return err
 	}
 
@@ -185,6 +187,16 @@ func (s *Registry) Listen(handleNode func(action string, node Node)) error {
 				log.Infof("node.update")
 				node.expire = time.Now().Unix() + DefaultExpire
 				s.handleNode(event.Action, event.Node)
+			} else {
+				event.Action = Save
+				subj := strings.ReplaceAll(msg.Subject, DefaultPublishPrefix, DefaultDiscoveryPrefix)
+				s.nc.Publish(subj, msg.Data)
+				s.nodes[nid] = &NodeItem{
+					expire: time.Now().Unix() + DefaultExpire,
+					node:   &event.Node,
+					subj:   msg.Subject,
+				}
+				s.handleNode(event.Action, event.Node)
 			}
 			s.mutex.Unlock()
 		case Delete:
@@ -210,7 +222,7 @@ func (s *Registry) Listen(handleNode func(action string, node Node)) error {
 				log.Errorf("%v", err)
 				return err
 			}
-			s.nc.Publish(msg.Reply, data)
+			msg.Respond(data)
 		default:
 			log.Warnf("unkonw message: %v", msg.Data)
 			return fmt.Errorf("unkonw message: %v", msg.Data)

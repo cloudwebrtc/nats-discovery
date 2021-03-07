@@ -114,7 +114,9 @@ func (c *Client) Watch(service string, onStateChange NodeStateChangeCallback) er
 
 	msgCh := make(chan *nats.Msg)
 
-	if c.sub, err = c.nc.ChanSubscribe(subj, msgCh); err != nil {
+	if c.sub, err = c.nc.Subscribe(subj, func(msg *nats.Msg) {
+		msgCh <- msg
+	}); err != nil {
 		return err
 	}
 
