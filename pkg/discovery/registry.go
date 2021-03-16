@@ -53,10 +53,11 @@ type RPC struct {
 
 // Node represents a node info
 type Node struct {
-	DC      string
-	Service string
-	NID     string
-	RPC     RPC
+	DC        string
+	Service   string
+	NID       string
+	RPC       RPC
+	ExtraInfo map[string]interface{}
 }
 
 // ID return the node id with scheme prefix

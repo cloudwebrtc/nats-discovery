@@ -34,6 +34,11 @@ func TestWatch(t *testing.T) {
 	s, err := NewClient(nc)
 	assert.NoError(t, err)
 
+	extraInfo := map[string]interface{}{
+		"key1": "value2",
+		"key2": false,
+	}
+
 	node := discovery.Node{
 		DC:      "dc1",
 		Service: "sfu",
@@ -43,6 +48,7 @@ func TestWatch(t *testing.T) {
 			Addr:     "sfu:5551",
 			Params:   map[string]string{"username": "foo", "password": "bar"},
 		},
+		ExtraInfo: extraInfo,
 	}
 
 	s.Watch("sfu", func(state discovery.NodeState, n *discovery.Node) {
@@ -50,6 +56,7 @@ func TestWatch(t *testing.T) {
 			log.Infof("NodeUp => %v", *n)
 			assert.Equal(t, node, *n)
 			assert.Equal(t, node.RPC, n.RPC)
+			assert.Equal(t, node.ExtraInfo, extraInfo)
 			wg.Done()
 		} else if state == discovery.NodeDown {
 			log.Infof("NodeDown => %v", *n)
@@ -64,6 +71,10 @@ func TestWatch(t *testing.T) {
 	wg.Wait()
 
 	res, err := s.Get("sfu")
+	if err != nil {
+		t.Error(err)
+	}
+
 	log.Infof("nodes => %v", res.Nodes)
 
 	assert.Equal(t, node.RPC, res.Nodes[0].RPC)
