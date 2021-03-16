@@ -159,7 +159,7 @@ func (s *Registry) Listen(handleNode func(action string, node Node)) error {
 	log.Infof("Registry: listen prefix => %v", subj)
 
 	handleMsg := func(msg *nats.Msg) error {
-		log.Infof("handle storage key: %v", msg.Subject)
+		log.Debugf("handle storage key: %v", msg.Subject)
 		var event KeepAlive
 		err := util.Unmarshal(msg.Data, &event)
 		if err != nil {
@@ -185,7 +185,7 @@ func (s *Registry) Listen(handleNode func(action string, node Node)) error {
 		case Update:
 			s.mutex.Lock()
 			if node, ok := s.nodes[nid]; ok {
-				log.Infof("node.update")
+				log.Debugf("node.update")
 				node.expire = time.Now().Unix() + DefaultExpire
 				s.handleNode(event.Action, event.Node)
 			} else {
