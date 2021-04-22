@@ -201,6 +201,7 @@ func (s *Registry) Listen(handleNode func(action string, node Node)) error {
 			}
 			s.mutex.Unlock()
 		case Delete:
+			s.mutex.Lock()
 			if _, ok := s.nodes[nid]; ok {
 				log.Infof("node.delete")
 				subj := strings.ReplaceAll(msg.Subject, DefaultPublishPrefix, DefaultDiscoveryPrefix)
@@ -208,6 +209,7 @@ func (s *Registry) Listen(handleNode func(action string, node Node)) error {
 				s.handleNode(event.Action, event.Node)
 			}
 			delete(s.nodes, nid)
+			s.mutex.Unlock()
 		case Get:
 			log.Infof("node.get")
 			resp := &GetResponse{}
