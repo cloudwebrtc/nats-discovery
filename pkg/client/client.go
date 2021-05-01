@@ -16,13 +16,12 @@ import (
 type NodeStateChangeCallback func(state discovery.NodeState, node *discovery.Node)
 
 type Client struct {
-	nc                    *nats.Conn
-	sub                   *nats.Subscription
-	nodes                 map[string]*discovery.Node
-	nodeLock              sync.Mutex
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	handleNodeStateChange NodeStateChangeCallback
+	nc       *nats.Conn
+	sub      *nats.Subscription
+	nodes    map[string]*discovery.Node
+	nodeLock sync.Mutex
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 func (c *Client) Close() {
@@ -42,9 +41,11 @@ func NewClient(nc *nats.Conn) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) Get(service string) (*discovery.GetResponse, error) {
-	data, err := util.Marshal(&discovery.KeepAlive{
-		Action: discovery.Get, Node: discovery.Node{},
+func (c *Client) Get(service string, params map[string]interface{}) (*discovery.GetResponse, error) {
+	data, err := util.Marshal(&discovery.Request{
+		Action:  discovery.Get,
+		Service: service,
+		Params:  params,
 	})
 	if err != nil {
 		log.Errorf("%v", err)
@@ -61,7 +62,7 @@ func (c *Client) Get(service string) (*discovery.GetResponse, error) {
 	var resp discovery.GetResponse
 	err = util.Unmarshal(msg.Data, &resp)
 	if err != nil {
-		log.Errorf("Get: error parsing offer: %v", err)
+		log.Errorf("Get: error parsing discovery.GetResponse: %v", err)
 		return nil, err
 	}
 
@@ -69,13 +70,13 @@ func (c *Client) Get(service string) (*discovery.GetResponse, error) {
 	return &resp, nil
 }
 
-func (c *Client) handleMsg(msg *nats.Msg) error {
+func (c *Client) handleNatsMsg(msg *nats.Msg, callback NodeStateChangeCallback) error {
 	log.Infof("handle discovery message: %v", msg.Subject)
 
 	c.nodeLock.Lock()
 	defer c.nodeLock.Unlock()
 
-	var event discovery.KeepAlive
+	var event discovery.Request
 	err := util.Unmarshal(msg.Data, &event)
 	if err != nil {
 		log.Errorf("connect: error parsing offer: %v", err)
@@ -87,31 +88,38 @@ func (c *Client) handleMsg(msg *nats.Msg) error {
 		if _, ok := c.nodes[nid]; !ok {
 			log.Infof("node.save")
 			c.nodes[nid] = &event.Node
-			c.handleNodeStateChange(discovery.NodeUp, &event.Node)
+			callback(discovery.NodeUp, &event.Node)
 		}
 	case discovery.Update:
 		if _, ok := c.nodes[nid]; ok {
 			log.Infof("node.update")
-			c.handleNodeStateChange(discovery.NodeKeepalive, &event.Node)
+			callback(discovery.NodeKeepalive, &event.Node)
 		}
 	case discovery.Delete:
 		if _, ok := c.nodes[nid]; ok {
 			log.Infof("node.delete")
-			c.handleNodeStateChange(discovery.NodeDown, &event.Node)
+			callback(discovery.NodeDown, &event.Node)
 		}
 		delete(c.nodes, nid)
 	default:
-		log.Warnf("unkonw message: %v", string(msg.Data))
-		return fmt.Errorf("unkonw message: %v", msg.Data)
+		err = fmt.Errorf("unkonw message: %v", msg.Data)
+		log.Warnf("handleNatsMsg: err => %v", err)
+		return err
 	}
 
 	return nil
 }
 
-func (c *Client) Watch(service string, onStateChange NodeStateChangeCallback) error {
+func (c *Client) Watch(service string, handleNodeState NodeStateChangeCallback) error {
 	var err error
-	subj := discovery.DefaultDiscoveryPrefix + "." + service + ".>"
 
+	if handleNodeState == nil {
+		err = fmt.Errorf("Watch callback must be set for %v", service)
+		log.Warnf("Watch: err => %v", err)
+		return err
+	}
+
+	subj := discovery.DefaultDiscoveryPrefix + "." + service + ".>"
 	msgCh := make(chan *nats.Msg)
 
 	if c.sub, err = c.nc.Subscribe(subj, func(msg *nats.Msg) {
@@ -120,8 +128,6 @@ func (c *Client) Watch(service string, onStateChange NodeStateChangeCallback) er
 		return err
 	}
 
-	c.handleNodeStateChange = onStateChange
-
 	go func() error {
 		for {
 			select {
@@ -129,7 +135,7 @@ func (c *Client) Watch(service string, onStateChange NodeStateChangeCallback) er
 				return c.ctx.Err()
 			case msg, ok := <-msgCh:
 				if ok {
-					err := c.handleMsg(msg)
+					err := c.handleNatsMsg(msg, handleNodeState)
 					if err != nil {
 						return err
 					}
@@ -147,11 +153,11 @@ func (c *Client) KeepAlive(node discovery.Node) error {
 	t := time.NewTicker(discovery.DefaultLivecycle)
 
 	defer func() {
-		c.SendAction(node, discovery.Delete)
+		c.sendAction(node, discovery.Delete)
 		t.Stop()
 	}()
 
-	c.SendAction(node, discovery.Save)
+	c.sendAction(node, discovery.Save)
 
 	for {
 		select {
@@ -160,14 +166,13 @@ func (c *Client) KeepAlive(node discovery.Node) error {
 			log.Errorf("keepalive abort: err %v", err)
 			return err
 		case <-t.C:
-			c.SendAction(node, discovery.Update)
-			break
+			c.sendAction(node, discovery.Update)
 		}
 	}
 }
 
-func (c *Client) SendAction(node discovery.Node, action string) error {
-	data, err := util.Marshal(&discovery.KeepAlive{
+func (c *Client) sendAction(node discovery.Node, action discovery.Action) error {
+	data, err := util.Marshal(&discovery.Request{
 		Action: action, Node: node,
 	})
 	if err != nil {
@@ -175,9 +180,23 @@ func (c *Client) SendAction(node discovery.Node, action string) error {
 		return err
 	}
 	subj := discovery.DefaultPublishPrefix + "." + node.Service + "." + node.ID()
-	if err := c.nc.Publish(subj, data); err != nil {
+	msg, err := c.nc.Request(subj, data, time.Duration(time.Second*15))
+	if err != nil {
 		log.Errorf("node start error: err=%v, id=%v", err, node.ID())
 		return nil
+	}
+
+	var resp discovery.Response
+	err = util.Unmarshal(msg.Data, &resp)
+	if err != nil {
+		log.Errorf("sendAction: [%v] parsing discovery.Response error: %v", action, err)
+		return err
+	}
+
+	if !resp.Success {
+		err := fmt.Errorf("[%v] response error %v", action, resp.Reason)
+		log.Errorf("sendAction: error: %v", err)
+		return err
 	}
 	return nil
 }

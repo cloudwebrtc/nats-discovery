@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
+	"github.com/cloudwebrtc/nats-discovery/pkg/registry"
 	"github.com/nats-io/nats.go"
 	log "github.com/pion/ion-log"
 )
@@ -51,13 +52,20 @@ func main() {
 		return
 	}
 
-	reg, err := discovery.NewRegistry(nc)
+	reg, err := registry.NewRegistry(nc)
 	if err != nil {
 		log.Errorf("%v", err)
 		return
 	}
-	reg.Listen(func(action string, node discovery.Node) {
+	reg.Listen(func(action discovery.Action, node discovery.Node) (bool, error) {
+		//Add authentication here
 		log.Infof("handle Node: %v, %v", action, node)
+		//return false, fmt.Errorf("reject action: %v", action)
+		return true, nil
+	}, func(service string, params map[string]interface{}) ([]discovery.Node, error) {
+		//Add load balancing here.
+		log.Infof("handle get nodes: service %v, params %v", service, params)
+		return reg.GetNodes(service)
 	})
 
 	select {}

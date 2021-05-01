@@ -70,7 +70,9 @@ func TestWatch(t *testing.T) {
 	go s.KeepAlive(node)
 	wg.Wait()
 
-	res, err := s.Get("sfu")
+	res, err := s.Get("sfu", map[string]interface{}{
+		"nid": "11111",
+	})
 	if err != nil {
 		t.Error(err)
 	}
@@ -80,6 +82,6 @@ func TestWatch(t *testing.T) {
 	assert.Equal(t, node.RPC, res.Nodes[0].RPC)
 
 	wg.Add(1)
-	s.SendAction(node, discovery.Delete)
+	s.sendAction(node, discovery.Delete)
 	wg.Wait()
 }
