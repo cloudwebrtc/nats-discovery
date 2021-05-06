@@ -13,6 +13,10 @@ import (
 	log "github.com/pion/ion-log"
 )
 
+var (
+	logger = log.NewLogger(log.InfoLevel, "nats-discovery.Client")
+)
+
 type NodeStateChangeCallback func(state discovery.NodeState, node *discovery.Node)
 
 type Client struct {
@@ -48,30 +52,30 @@ func (c *Client) Get(service string, params map[string]interface{}) (*discovery.
 		Params:  params,
 	})
 	if err != nil {
-		log.Errorf("%v", err)
+		logger.Errorf("%v", err)
 		return nil, err
 	}
 	subj := discovery.DefaultPublishPrefix + "." + service
-	log.Infof("Get: subj=%v", subj)
+	logger.Infof("Get: subj=%v", subj)
 	msg, err := c.nc.Request(subj, data, 15*time.Second)
 	if err != nil {
-		log.Errorf("Get: service=%v, err=%v", service, err)
+		logger.Errorf("Get: service=%v, err=%v", service, err)
 		return nil, err
 	}
 
 	var resp discovery.GetResponse
 	err = util.Unmarshal(msg.Data, &resp)
 	if err != nil {
-		log.Errorf("Get: error parsing discovery.GetResponse: %v", err)
+		logger.Errorf("Get: error parsing discovery.GetResponse: %v", err)
 		return nil, err
 	}
 
-	log.Infof("nodes %v", resp.Nodes)
+	logger.Infof("nodes %v", resp.Nodes)
 	return &resp, nil
 }
 
 func (c *Client) handleNatsMsg(msg *nats.Msg, callback NodeStateChangeCallback) error {
-	log.Infof("handle discovery message: %v", msg.Subject)
+	logger.Infof("handle discovery message: %v", msg.Subject)
 
 	c.nodeLock.Lock()
 	defer c.nodeLock.Unlock()
@@ -79,31 +83,31 @@ func (c *Client) handleNatsMsg(msg *nats.Msg, callback NodeStateChangeCallback) 
 	var event discovery.Request
 	err := util.Unmarshal(msg.Data, &event)
 	if err != nil {
-		log.Errorf("connect: error parsing offer: %v", err)
+		logger.Errorf("connect: error parsing offer: %v", err)
 		return err
 	}
 	nid := event.Node.ID()
 	switch event.Action {
 	case discovery.Save:
 		if _, ok := c.nodes[nid]; !ok {
-			log.Infof("node.save")
+			logger.Infof("node.save")
 			c.nodes[nid] = &event.Node
 			callback(discovery.NodeUp, &event.Node)
 		}
 	case discovery.Update:
 		if _, ok := c.nodes[nid]; ok {
-			log.Infof("node.update")
+			logger.Infof("node.update")
 			callback(discovery.NodeKeepalive, &event.Node)
 		}
 	case discovery.Delete:
 		if _, ok := c.nodes[nid]; ok {
-			log.Infof("node.delete")
+			logger.Infof("node.delete")
 			callback(discovery.NodeDown, &event.Node)
 		}
 		delete(c.nodes, nid)
 	default:
 		err = fmt.Errorf("unkonw message: %v", msg.Data)
-		log.Warnf("handleNatsMsg: err => %v", err)
+		logger.Warnf("handleNatsMsg: err => %v", err)
 		return err
 	}
 
@@ -115,7 +119,7 @@ func (c *Client) Watch(service string, handleNodeState NodeStateChangeCallback) 
 
 	if handleNodeState == nil {
 		err = fmt.Errorf("Watch callback must be set for %v", service)
-		log.Warnf("Watch: err => %v", err)
+		logger.Warnf("Watch: err => %v", err)
 		return err
 	}
 
@@ -163,7 +167,7 @@ func (c *Client) KeepAlive(node discovery.Node) error {
 		select {
 		case <-c.ctx.Done():
 			err := c.ctx.Err()
-			log.Errorf("keepalive abort: err %v", err)
+			logger.Errorf("keepalive abort: err %v", err)
 			return err
 		case <-t.C:
 			c.sendAction(node, discovery.Update)
@@ -176,26 +180,26 @@ func (c *Client) sendAction(node discovery.Node, action discovery.Action) error 
 		Action: action, Node: node,
 	})
 	if err != nil {
-		log.Errorf("%v", err)
+		logger.Errorf("%v", err)
 		return err
 	}
 	subj := discovery.DefaultPublishPrefix + "." + node.Service + "." + node.ID()
 	msg, err := c.nc.Request(subj, data, time.Duration(time.Second*15))
 	if err != nil {
-		log.Errorf("node start error: err=%v, id=%v", err, node.ID())
+		logger.Errorf("node start error: err=%v, id=%v", err, node.ID())
 		return nil
 	}
 
 	var resp discovery.Response
 	err = util.Unmarshal(msg.Data, &resp)
 	if err != nil {
-		log.Errorf("sendAction: [%v] parsing discovery.Response error: %v", action, err)
+		logger.Errorf("sendAction: [%v] parsing discovery.Response error: %v", action, err)
 		return err
 	}
 
 	if !resp.Success {
 		err := fmt.Errorf("[%v] response error %v", action, resp.Reason)
-		log.Errorf("sendAction: error: %v", err)
+		logger.Errorf("sendAction: error: %v", err)
 		return err
 	}
 	return nil

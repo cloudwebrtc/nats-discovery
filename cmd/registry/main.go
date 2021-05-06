@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	log.Init("info", []string{"asm_amd64.s", "proc.go"}, []string{})
+	log.Init("info")
 }
 
 //setupConnOptions default conn opts.

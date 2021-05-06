@@ -14,6 +14,10 @@ import (
 	log "github.com/pion/ion-log"
 )
 
+var (
+	logger = log.NewLogger(log.InfoLevel, "nats-discovery.Registry")
+)
+
 type NodeItem struct {
 	subj   string
 	expire int64
@@ -52,17 +56,17 @@ func (s *Registry) checkExpires(now int64, handleNodeAction func(action discover
 	for key, item := range s.nodes {
 		if item.expire <= now {
 			discoverySubj := strings.ReplaceAll(item.subj, discovery.DefaultPublishPrefix, discovery.DefaultDiscoveryPrefix)
-			log.Infof("node.delete %v, %v", discoverySubj, key)
+			logger.Infof("node.delete %v, %v", discoverySubj, key)
 			d, err := util.Marshal(&discovery.Request{
 				Action: discovery.Delete, Node: *item.node,
 			})
 			if err != nil {
-				log.Errorf("%v", err)
+				logger.Errorf("%v", err)
 				return err
 			}
 
 			if err := s.nc.Publish(discoverySubj, d); err != nil {
-				log.Errorf("node start error: err=%v, id=%s", err, item.node.ID())
+				logger.Errorf("node start error: err=%v, id=%s", err, item.node.ID())
 				return nil
 			}
 			handleNodeAction(discovery.Delete, *item.node)
@@ -91,7 +95,7 @@ func (s *Registry) Listen(
 
 	if handleNodeAction == nil || handleGetNodes == nil {
 		err = fmt.Errorf("Listen callback must be set for Registry.Listen")
-		log.Warnf("Listen: err => %v", err)
+		logger.Warnf("Listen: err => %v", err)
 		return err
 	}
 
@@ -104,17 +108,17 @@ func (s *Registry) Listen(
 		return err
 	}
 
-	log.Infof("Registry: listen prefix => %v", subj)
+	logger.Infof("Registry: listen prefix => %v", subj)
 
 	handleNatsMsg := func(msg *nats.Msg) error {
 		s.mutex.Lock()
 		defer s.mutex.Unlock()
 
-		log.Debugf("handle storage key: %v", msg.Subject)
+		logger.Debugf("handle storage key: %v", msg.Subject)
 		var req discovery.Request
 		err := util.Unmarshal(msg.Data, &req)
 		if err != nil {
-			log.Errorf("connect: error parsing offer: %v", err)
+			logger.Errorf("connect: error parsing offer: %v", err)
 			return err
 		}
 		nid := req.Node.ID()
@@ -125,10 +129,10 @@ func (s *Registry) Listen(
 		switch req.Action {
 		case discovery.Save:
 			if _, ok := s.nodes[nid]; !ok {
-				log.Infof("node.save")
+				logger.Infof("node.save")
 				// accept or reject
 				if ok, err := handleNodeAction(req.Action, req.Node); !ok {
-					log.Errorf("aciont %v, rejected %v", req.Action, err)
+					logger.Errorf("aciont %v, rejected %v", req.Action, err)
 					resp.Success = false
 					resp.Reason = fmt.Sprint(err)
 					break
@@ -145,17 +149,17 @@ func (s *Registry) Listen(
 			}
 		case discovery.Update:
 			if node, ok := s.nodes[nid]; ok {
-				log.Debugf("node.update")
+				logger.Debugf("node.update")
 				node.expire = time.Now().Unix() + discovery.DefaultExpire
 				if ok, err := handleNodeAction(req.Action, req.Node); !ok {
-					log.Errorf("aciont %v, rejected %v", req.Action, err)
+					logger.Errorf("aciont %v, rejected %v", req.Action, err)
 					resp.Success = false
 					resp.Reason = fmt.Sprint(err)
 				}
 			} else {
 				req.Action = discovery.Save
 				if ok, err := handleNodeAction(req.Action, req.Node); !ok {
-					log.Errorf("aciont %v, rejected %v", req.Action, err)
+					logger.Errorf("aciont %v, rejected %v", req.Action, err)
 					resp.Success = false
 					resp.Reason = fmt.Sprint(err)
 					break
@@ -170,9 +174,9 @@ func (s *Registry) Listen(
 			}
 		case discovery.Delete:
 			if _, ok := s.nodes[nid]; ok {
-				log.Infof("node.delete")
+				logger.Infof("node.delete")
 				if ok, err := handleNodeAction(req.Action, req.Node); !ok {
-					log.Errorf("aciont %v, rejected %v", req.Action, err)
+					logger.Errorf("aciont %v, rejected %v", req.Action, err)
 					resp.Success = false
 					resp.Reason = fmt.Sprint(err)
 					break
@@ -190,19 +194,19 @@ func (s *Registry) Listen(
 			s.mutex.Lock()
 			data, err := util.Marshal(resp)
 			if err != nil {
-				log.Errorf("%v", err)
+				logger.Errorf("%v", err)
 				return err
 			}
 			msg.Respond(data)
 			return nil
 		default:
-			log.Warnf("unkonw message: %v", msg.Data)
+			logger.Warnf("unkonw message: %v", msg.Data)
 			return fmt.Errorf("unkonw message: %v", msg.Data)
 		}
 
 		data, err := util.Marshal(&resp)
 		if err != nil {
-			log.Errorf("%v", err)
+			logger.Errorf("%v", err)
 			return err
 		}
 		s.nc.Publish(msg.Reply, data)
@@ -220,7 +224,7 @@ func (s *Registry) Listen(
 			case <-t.C:
 				now++
 				if err := s.checkExpires(now, handleNodeAction); err != nil {
-					log.Warnf("checkExpires err: %v", err)
+					logger.Warnf("checkExpires err: %v", err)
 					return err
 				}
 			case msg, ok := <-msgCh:
