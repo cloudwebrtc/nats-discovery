@@ -21,7 +21,6 @@ type NodeStateChangeCallback func(state discovery.NodeState, node *discovery.Nod
 
 type Client struct {
 	nc       *nats.Conn
-	sub      *nats.Subscription
 	nodes    map[string]*discovery.Node
 	nodeLock sync.Mutex
 	ctx      context.Context
@@ -30,7 +29,6 @@ type Client struct {
 
 func (c *Client) Close() {
 	c.cancel()
-	c.sub.Unsubscribe()
 }
 
 // NewService create a service instance
@@ -92,19 +90,20 @@ func (c *Client) handleNatsMsg(msg *nats.Msg, callback NodeStateChangeCallback) 
 		if _, ok := c.nodes[nid]; !ok {
 			logger.Infof("node.save")
 			c.nodes[nid] = &event.Node
-			callback(discovery.NodeUp, &event.Node)
 		}
+		callback(discovery.NodeUp, &event.Node)
 	case discovery.Update:
 		if _, ok := c.nodes[nid]; ok {
 			logger.Infof("node.update")
-			callback(discovery.NodeKeepalive, &event.Node)
+			c.nodes[nid] = &event.Node
 		}
+		callback(discovery.NodeKeepalive, &event.Node)
 	case discovery.Delete:
 		if _, ok := c.nodes[nid]; ok {
 			logger.Infof("node.delete")
-			callback(discovery.NodeDown, &event.Node)
+			delete(c.nodes, nid)
 		}
-		delete(c.nodes, nid)
+		callback(discovery.NodeDown, &event.Node)
 	default:
 		err = fmt.Errorf("unkonw message: %v", msg.Data)
 		logger.Warnf("handleNatsMsg: err => %v", err)
@@ -115,10 +114,8 @@ func (c *Client) handleNatsMsg(msg *nats.Msg, callback NodeStateChangeCallback) 
 }
 
 func (c *Client) Watch(service string, handleNodeState NodeStateChangeCallback) error {
-	var err error
-
 	if handleNodeState == nil {
-		err = fmt.Errorf("Watch callback must be set for %v", service)
+		err := fmt.Errorf("Watch callback must be set for %v", service)
 		logger.Warnf("Watch: err => %v", err)
 		return err
 	}
@@ -126,13 +123,17 @@ func (c *Client) Watch(service string, handleNodeState NodeStateChangeCallback) 
 	subj := discovery.DefaultDiscoveryPrefix + "." + service + ".>"
 	msgCh := make(chan *nats.Msg)
 
-	if c.sub, err = c.nc.Subscribe(subj, func(msg *nats.Msg) {
+	sub, err := c.nc.Subscribe(subj, func(msg *nats.Msg) {
 		msgCh <- msg
-	}); err != nil {
+	})
+
+	if err != nil {
 		return err
 	}
 
 	go func() error {
+		defer sub.Unsubscribe()
+
 		for {
 			select {
 			case <-c.ctx.Done():
