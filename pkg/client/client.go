@@ -113,7 +113,7 @@ func (c *Client) handleNatsMsg(msg *nats.Msg, callback NodeStateChangeCallback) 
 	return nil
 }
 
-func (c *Client) Watch(service string, handleNodeState NodeStateChangeCallback) error {
+func (c *Client) Watch(ctx context.Context, service string, handleNodeState NodeStateChangeCallback) error {
 	if handleNodeState == nil {
 		err := fmt.Errorf("Watch callback must be set for %v", service)
 		logger.Warnf("Watch: err => %v", err)
@@ -138,6 +138,8 @@ func (c *Client) Watch(service string, handleNodeState NodeStateChangeCallback) 
 			select {
 			case <-c.ctx.Done():
 				return c.ctx.Err()
+			case <-ctx.Done():
+				return ctx.Err()
 			case msg, ok := <-msgCh:
 				if ok {
 					err := c.handleNatsMsg(msg, handleNodeState)

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -51,7 +52,7 @@ func TestWatch(t *testing.T) {
 		ExtraInfo: extraInfo,
 	}
 
-	s.Watch("sfu", func(state discovery.NodeState, n *discovery.Node) {
+	s.Watch(context.Background(), "sfu", func(state discovery.NodeState, n *discovery.Node) {
 		if state == discovery.NodeUp {
 			log.Infof("NodeUp => %v", *n)
 			assert.Equal(t, node, *n)
