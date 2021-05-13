@@ -66,6 +66,14 @@ func TestWatch(t *testing.T) {
 		}
 	})
 
+	s.Watch(context.Background(), "*", func(state discovery.NodeState, n *discovery.Node) {
+		if state == discovery.NodeUp {
+			log.Infof("NodeUp2 => %v", *n)
+		} else if state == discovery.NodeDown {
+			log.Infof("NodeDown2 => %v", *n)
+		}
+	})
+
 	wg.Add(1)
 
 	go s.KeepAlive(node)

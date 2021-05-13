@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
@@ -26,34 +25,32 @@ type NodeItem struct {
 
 type Registry struct {
 	nc     *nats.Conn
-	sub    *nats.Subscription
-	nodes  map[string]*NodeItem
 	ctx    context.Context
 	cancel context.CancelFunc
-	mutex  sync.Mutex
+	expire int64
 }
 
 func (s *Registry) Close() {
 	s.cancel()
-	s.sub.Unsubscribe()
 }
 
 // NewService create a service instance
-func NewRegistry(nc *nats.Conn) (*Registry, error) {
+func NewRegistry(nc *nats.Conn, expire int64) (*Registry, error) {
 	s := &Registry{
-		nc:    nc,
-		nodes: make(map[string]*NodeItem),
+		nc:     nc,
+		expire: expire,
+	}
+
+	if s.expire <= 0 {
+		s.expire = discovery.DefaultExpire
 	}
 
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	return s, nil
 }
 
-func (s *Registry) checkExpires(now int64, handleNodeAction func(action discovery.Action, node discovery.Node) (bool, error)) error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	for key, item := range s.nodes {
+func (s *Registry) checkExpires(nodes map[string]*NodeItem, now int64, handleNodeAction func(action discovery.Action, node discovery.Node) (bool, error)) error {
+	for key, item := range nodes {
 		if item.expire <= now {
 			discoverySubj := strings.ReplaceAll(item.subj, discovery.DefaultPublishPrefix, discovery.DefaultDiscoveryPrefix)
 			logger.Infof("node.delete %v, %v", discoverySubj, key)
@@ -70,31 +67,18 @@ func (s *Registry) checkExpires(now int64, handleNodeAction func(action discover
 				return nil
 			}
 			handleNodeAction(discovery.Delete, *item.node)
-			delete(s.nodes, key)
+			delete(nodes, key)
 		}
 	}
 	return nil
 }
 
-func (s *Registry) GetNodes(service string) ([]discovery.Node, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	nodes := []discovery.Node{}
-	for _, item := range s.nodes {
-		if item.node.Service == service || service == "*" {
-			nodes = append(nodes, *item.node)
-		}
-	}
-	return nodes, nil
-}
-
 func (s *Registry) Listen(
 	handleNodeAction func(action discovery.Action, node discovery.Node) (bool, error),
 	handleGetNodes func(service string, params map[string]interface{}) ([]discovery.Node, error)) error {
-	var err error
 
 	if handleNodeAction == nil || handleGetNodes == nil {
-		err = fmt.Errorf("Listen callback must be set for Registry.Listen")
+		err := fmt.Errorf("Listen callback must be set for Registry.Listen")
 		logger.Warnf("Listen: err => %v", err)
 		return err
 	}
@@ -102,18 +86,19 @@ func (s *Registry) Listen(
 	subj := discovery.DefaultPublishPrefix + ".>"
 	msgCh := make(chan *nats.Msg)
 
-	if s.sub, err = s.nc.Subscribe(subj, func(msg *nats.Msg) {
+	sub, err := s.nc.Subscribe(subj, func(msg *nats.Msg) {
 		msgCh <- msg
-	}); err != nil {
+	})
+
+	if err != nil {
 		return err
 	}
 
-	logger.Infof("Registry: listen prefix => %v", subj)
+	logger.Infof("Registry: listen subj prefix => %v", subj)
+
+	nodes := make(map[string]*NodeItem)
 
 	handleNatsMsg := func(msg *nats.Msg) error {
-		s.mutex.Lock()
-		defer s.mutex.Unlock()
-
 		logger.Debugf("handle storage key: %v", msg.Subject)
 		var req discovery.Request
 		err := util.Unmarshal(msg.Data, &req)
@@ -128,7 +113,7 @@ func (s *Registry) Listen(
 		}
 		switch req.Action {
 		case discovery.Save:
-			if _, ok := s.nodes[nid]; !ok {
+			if _, ok := nodes[nid]; !ok {
 				logger.Infof("node.save")
 				// accept or reject
 				if ok, err := handleNodeAction(req.Action, req.Node); !ok {
@@ -141,16 +126,16 @@ func (s *Registry) Listen(
 				discoverySubj := strings.ReplaceAll(msg.Subject, discovery.DefaultPublishPrefix, discovery.DefaultDiscoveryPrefix)
 				s.nc.Publish(discoverySubj, msg.Data)
 
-				s.nodes[nid] = &NodeItem{
-					expire: time.Now().Unix() + discovery.DefaultExpire,
+				nodes[nid] = &NodeItem{
+					expire: time.Now().Unix() + s.expire,
 					node:   &req.Node,
 					subj:   msg.Subject,
 				}
 			}
 		case discovery.Update:
-			if node, ok := s.nodes[nid]; ok {
+			if node, ok := nodes[nid]; ok {
 				logger.Debugf("node.update")
-				node.expire = time.Now().Unix() + discovery.DefaultExpire
+				node.expire = time.Now().Unix() + s.expire
 				if ok, err := handleNodeAction(req.Action, req.Node); !ok {
 					logger.Errorf("aciont %v, rejected %v", req.Action, err)
 					resp.Success = false
@@ -166,14 +151,14 @@ func (s *Registry) Listen(
 				}
 				discoverySubj := strings.ReplaceAll(msg.Subject, discovery.DefaultPublishPrefix, discovery.DefaultDiscoveryPrefix)
 				s.nc.Publish(discoverySubj, msg.Data)
-				s.nodes[nid] = &NodeItem{
-					expire: time.Now().Unix() + discovery.DefaultExpire,
+				nodes[nid] = &NodeItem{
+					expire: time.Now().Unix() + s.expire,
 					node:   &req.Node,
 					subj:   msg.Subject,
 				}
 			}
 		case discovery.Delete:
-			if _, ok := s.nodes[nid]; ok {
+			if _, ok := nodes[nid]; ok {
 				logger.Infof("node.delete")
 				if ok, err := handleNodeAction(req.Action, req.Node); !ok {
 					logger.Errorf("aciont %v, rejected %v", req.Action, err)
@@ -184,14 +169,12 @@ func (s *Registry) Listen(
 				discoverySubj := strings.ReplaceAll(msg.Subject, discovery.DefaultPublishPrefix, discovery.DefaultDiscoveryPrefix)
 				s.nc.Publish(discoverySubj, msg.Data)
 			}
-			delete(s.nodes, nid)
+			delete(nodes, nid)
 		case discovery.Get:
 			resp := &discovery.GetResponse{}
-			s.mutex.Unlock()
 			if nodes, err := handleGetNodes(req.Service, req.Params); err == nil {
 				resp.Nodes = nodes
 			}
-			s.mutex.Lock()
 			data, err := util.Marshal(resp)
 			if err != nil {
 				logger.Errorf("%v", err)
@@ -209,12 +192,18 @@ func (s *Registry) Listen(
 			logger.Errorf("%v", err)
 			return err
 		}
+
 		s.nc.Publish(msg.Reply, data)
 		return nil
 	}
 
 	go func() error {
-		defer close(msgCh)
+
+		defer func() {
+			sub.Unsubscribe()
+			close(msgCh)
+		}()
+
 		now := time.Now().Unix()
 		t := time.NewTicker(time.Second * 1)
 		for {
@@ -223,7 +212,7 @@ func (s *Registry) Listen(
 				return s.ctx.Err()
 			case <-t.C:
 				now++
-				if err := s.checkExpires(now, handleNodeAction); err != nil {
+				if err := s.checkExpires(nodes, now, handleNodeAction); err != nil {
 					logger.Warnf("checkExpires err: %v", err)
 					return err
 				}

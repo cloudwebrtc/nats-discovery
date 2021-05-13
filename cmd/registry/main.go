@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"time"
 
 	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
@@ -52,21 +53,58 @@ func main() {
 		return
 	}
 
-	reg, err := registry.NewRegistry(nc)
+	reg, err := registry.NewRegistry(nc, discovery.DefaultExpire)
 	if err != nil {
 		log.Errorf("%v", err)
 		return
 	}
-	reg.Listen(func(action discovery.Action, node discovery.Node) (bool, error) {
-		//Add authentication here
-		log.Infof("handle Node: %v, %v", action, node)
-		//return false, fmt.Errorf("reject action: %v", action)
-		return true, nil
-	}, func(service string, params map[string]interface{}) ([]discovery.Node, error) {
-		//Add load balancing here.
-		log.Infof("handle get nodes: service %v, params %v", service, params)
-		return reg.GetNodes(service)
-	})
+
+	nodes := make(map[string]discovery.Node)
+	mutex := sync.Mutex{}
+
+	reg.Listen(
+		// handleNodeAction
+		func(action discovery.Action, node discovery.Node) (bool, error) {
+			log.Infof("handleNodeAction: action %v, node %v", action, node)
+
+			/*
+				You can store node info in db like redis here.
+			*/
+
+			mutex.Lock()
+			defer mutex.Unlock()
+
+			switch action {
+			case discovery.Save:
+				fallthrough
+			case discovery.Update:
+				nodes[node.ID()] = node
+			case discovery.Delete:
+				delete(nodes, node.ID())
+			}
+
+			return true, nil
+		},
+		//handleGetNodes
+		func(service string, params map[string]interface{}) ([]discovery.Node, error) {
+			log.Infof("handleGetNodes: service %v, params %v", service, params)
+
+			/*
+				You can read the global node information from redis here.
+			*/
+
+			mutex.Lock()
+			defer mutex.Unlock()
+
+			nodesResp := []discovery.Node{}
+			for _, item := range nodes {
+				if item.Service == service || service == "*" {
+					nodesResp = append(nodesResp, item)
+				}
+			}
+
+			return nodesResp, nil
+		})
 
 	select {}
 }

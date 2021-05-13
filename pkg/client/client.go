@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sync"
 	"time"
 
 	"github.com/cloudwebrtc/nats-discovery/pkg/discovery"
@@ -20,11 +19,9 @@ var (
 type NodeStateChangeCallback func(state discovery.NodeState, node *discovery.Node)
 
 type Client struct {
-	nc       *nats.Conn
-	nodes    map[string]*discovery.Node
-	nodeLock sync.Mutex
-	ctx      context.Context
-	cancel   context.CancelFunc
+	nc     *nats.Conn
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func (c *Client) Close() {
@@ -35,8 +32,7 @@ func (c *Client) Close() {
 func NewClient(nc *nats.Conn) (*Client, error) {
 
 	c := &Client{
-		nc:    nc,
-		nodes: make(map[string]*discovery.Node),
+		nc: nc,
 	}
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
@@ -73,10 +69,8 @@ func (c *Client) Get(service string, params map[string]interface{}) (*discovery.
 }
 
 func (c *Client) handleNatsMsg(msg *nats.Msg, callback NodeStateChangeCallback) error {
-	logger.Infof("handle discovery message: %v", msg.Subject)
 
-	c.nodeLock.Lock()
-	defer c.nodeLock.Unlock()
+	logger.Infof("handle discovery message: %v", msg.Subject)
 
 	var event discovery.Request
 	err := util.Unmarshal(msg.Data, &event)
@@ -84,25 +78,17 @@ func (c *Client) handleNatsMsg(msg *nats.Msg, callback NodeStateChangeCallback) 
 		logger.Errorf("connect: error parsing offer: %v", err)
 		return err
 	}
+
 	nid := event.Node.ID()
 	switch event.Action {
 	case discovery.Save:
-		if _, ok := c.nodes[nid]; !ok {
-			logger.Infof("node.save")
-			c.nodes[nid] = &event.Node
-		}
+		logger.Infof("node.save: %v", nid)
 		callback(discovery.NodeUp, &event.Node)
 	case discovery.Update:
-		if _, ok := c.nodes[nid]; ok {
-			logger.Infof("node.update")
-			c.nodes[nid] = &event.Node
-		}
+		logger.Infof("node.update: %v", nid)
 		callback(discovery.NodeKeepalive, &event.Node)
 	case discovery.Delete:
-		if _, ok := c.nodes[nid]; ok {
-			logger.Infof("node.delete")
-			delete(c.nodes, nid)
-		}
+		logger.Infof("node.delete: %v", nid)
 		callback(discovery.NodeDown, &event.Node)
 	default:
 		err = fmt.Errorf("unkonw message: %v", msg.Data)
@@ -132,7 +118,11 @@ func (c *Client) Watch(ctx context.Context, service string, handleNodeState Node
 	}
 
 	go func() error {
-		defer sub.Unsubscribe()
+
+		defer func() {
+			sub.Unsubscribe()
+			close(msgCh)
+		}()
 
 		for {
 			select {
