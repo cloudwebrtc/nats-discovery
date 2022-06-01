@@ -32,7 +32,7 @@ func TestWatch(t *testing.T) {
 		t.Error(err)
 	}
 
-	s, err := NewClient(nc)
+	s, err := NewClient(nc, discovery.DefaultLivecycle)
 	assert.NoError(t, err)
 
 	extraInfo := map[string]interface{}{

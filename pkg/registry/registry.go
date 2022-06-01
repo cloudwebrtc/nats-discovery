@@ -19,7 +19,7 @@ var (
 
 type NodeItem struct {
 	subj   string
-	expire int64
+	expire time.Duration
 	node   *discovery.Node
 }
 
@@ -27,7 +27,7 @@ type Registry struct {
 	nc     *nats.Conn
 	ctx    context.Context
 	cancel context.CancelFunc
-	expire int64
+	expire time.Duration
 }
 
 func (s *Registry) Close() {
@@ -35,7 +35,7 @@ func (s *Registry) Close() {
 }
 
 // NewService create a service instance
-func NewRegistry(nc *nats.Conn, expire int64) (*Registry, error) {
+func NewRegistry(nc *nats.Conn, expire time.Duration) (*Registry, error) {
 	s := &Registry{
 		nc:     nc,
 		expire: expire,
@@ -49,7 +49,7 @@ func NewRegistry(nc *nats.Conn, expire int64) (*Registry, error) {
 	return s, nil
 }
 
-func (s *Registry) checkExpires(nodes map[string]*NodeItem, now int64, handleNodeAction func(action discovery.Action, node discovery.Node) (bool, error)) error {
+func (s *Registry) checkExpires(nodes map[string]*NodeItem, now time.Duration, handleNodeAction func(action discovery.Action, node discovery.Node) (bool, error)) error {
 	for key, item := range nodes {
 		if item.expire <= now {
 			discoverySubj := strings.ReplaceAll(item.subj, discovery.DefaultPublishPrefix, discovery.DefaultDiscoveryPrefix)
@@ -127,7 +127,7 @@ func (s *Registry) Listen(
 				s.nc.Publish(discoverySubj, msg.Data)
 
 				nodes[nid] = &NodeItem{
-					expire: time.Now().Unix() + s.expire,
+					expire: time.Duration(time.Now().UnixNano()) + s.expire,
 					node:   &req.Node,
 					subj:   msg.Subject,
 				}
@@ -135,7 +135,7 @@ func (s *Registry) Listen(
 		case discovery.Update:
 			if node, ok := nodes[nid]; ok {
 				logger.Debugf("node.update")
-				node.expire = time.Now().Unix() + s.expire
+				node.expire = time.Duration(time.Now().UnixNano()) + s.expire
 				if ok, err := handleNodeAction(req.Action, req.Node); !ok {
 					logger.Errorf("aciont %v, rejected %v", req.Action, err)
 					resp.Success = false
@@ -152,7 +152,7 @@ func (s *Registry) Listen(
 				discoverySubj := strings.ReplaceAll(msg.Subject, discovery.DefaultPublishPrefix, discovery.DefaultDiscoveryPrefix)
 				s.nc.Publish(discoverySubj, msg.Data)
 				nodes[nid] = &NodeItem{
-					expire: time.Now().Unix() + s.expire,
+					expire: time.Duration(time.Now().UnixNano()) + s.expire,
 					node:   &req.Node,
 					subj:   msg.Subject,
 				}
@@ -204,15 +204,13 @@ func (s *Registry) Listen(
 			close(msgCh)
 		}()
 
-		now := time.Now().Unix()
-		t := time.NewTicker(time.Second * 1)
+		t := time.NewTicker(s.expire / 2)
 		for {
 			select {
 			case <-s.ctx.Done():
 				return s.ctx.Err()
 			case <-t.C:
-				now++
-				if err := s.checkExpires(nodes, now, handleNodeAction); err != nil {
+				if err := s.checkExpires(nodes, time.Duration(time.Now().UnixNano()), handleNodeAction); err != nil {
 					logger.Warnf("checkExpires err: %v", err)
 					return err
 				}
