@@ -19,9 +19,10 @@ var (
 type NodeStateChangeCallback func(state discovery.NodeState, node *discovery.Node)
 
 type Client struct {
-	nc     *nats.Conn
-	ctx    context.Context
-	cancel context.CancelFunc
+	nc        *nats.Conn
+	ctx       context.Context
+	cancel    context.CancelFunc
+	liveCycle time.Duration
 }
 
 func (c *Client) Close() {
@@ -29,10 +30,15 @@ func (c *Client) Close() {
 }
 
 // NewService create a service instance
-func NewClient(nc *nats.Conn) (*Client, error) {
+func NewClient(nc *nats.Conn, liveCycle time.Duration) (*Client, error) {
 
 	c := &Client{
-		nc: nc,
+		nc:        nc,
+		liveCycle: liveCycle,
+	}
+
+	if c.liveCycle <= 0 {
+		c.liveCycle = discovery.DefaultExpire
 	}
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
@@ -147,7 +153,7 @@ func (c *Client) Watch(ctx context.Context, service string, handleNodeState Node
 }
 
 func (c *Client) KeepAlive(node discovery.Node) error {
-	t := time.NewTicker(discovery.DefaultLivecycle)
+	t := time.NewTicker(c.liveCycle)
 
 	defer func() {
 		c.sendAction(node, discovery.Delete)

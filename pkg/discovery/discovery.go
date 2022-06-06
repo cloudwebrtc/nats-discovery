@@ -17,7 +17,7 @@ const (
 	DefaultDiscoveryPrefix = "node.discovery"
 
 	DefaultLivecycle = 2 * time.Second
-	DefaultExpire    = 5
+	DefaultExpire    = 5 * time.Second
 )
 
 type Action string
